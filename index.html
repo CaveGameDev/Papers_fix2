@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Papers_Please</title>
+<link rel="icon" type="image/png" href="icon.png">
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #000;
+    color: #d8d8d8;
+    font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    overflow: hidden;
+  }
+  #status {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    box-sizing: border-box;
+    text-align: center;
+    background: #000;
+  }
+  #status h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  #status p {
+    margin: 0;
+    max-width: 620px;
+    color: #9aa3a8;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  #bar {
+    width: min(420px, 80vw);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #1d1d1d;
+  }
+  #fill {
+    height: 100%;
+    width: 0;
+    background: #b5302a;
+    transition: width 120ms linear;
+  }
+  #pick {
+    margin-top: 4px;
+    padding: 10px 16px;
+    border: 1px solid #4b4b4b;
+    border-radius: 6px;
+    background: #111;
+    color: #d8d8d8;
+    font: inherit;
+    cursor: pointer;
+  }
+  #pick:hover { background: #1b1b1b; }
+  code {
+    color: #eee;
+    font-family: ui-monospace, Consolas, monospace;
+  }
+</style>
+</head>
+<body>
+<div id="status">
+  <h1>Installing Engine..</h1>
+  <div id="bar"><div id="fill"></div></div>
+  <p id="msg">Fetching..</p>
+  <div id="fallback" hidden>
+    <p>
+      The parts could not be fetched. Open this folder through a local web server
+      (for example <code>python3 -m http.server</code>) so the loader can read them,
+      or select the <code>parts</code> folder here.
+    </p>
+    <input id="pick" type="file" webkitdirectory multiple accept=".bin">
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var PART_COUNT = 10;
+  var partNames = [];
+  for (var i = 1; i <= PART_COUNT; i++) {
+    partNames.push("parts/part-" + String(i).padStart(2, "0") + ".bin");
+  }
+
+  var status = document.getElementById("status");
+  var heading = status.querySelector("h1");
+  var msg = document.getElementById("msg");
+  var fill = document.getElementById("fill");
+  var fallback = document.getElementById("fallback");
+  var picker = document.getElementById("pick");
+
+  function showFallback(text) {
+    heading.textContent = "Parts not loaded";
+    msg.textContent = text;
+    fallback.hidden = false;
+  }
+
+  function launch(buffers) {
+    var decoder = new TextDecoder("utf-8");
+    var html = "";
+
+    for (var i = 0; i < buffers.length; i++) {
+      html += decoder.decode(new Uint8Array(buffers[i]), { stream: true });
+    }
+    html += decoder.decode();
+
+    msg.textContent = "Starting game… (" + (html.length / 1048576).toFixed(1) + " MB)";
+    fill.style.width = "100%";
+
+    // Emscripten rewrites document.title with the emulated MIPS rate. Keep the
+    // loader's title instead and give the game document the same favicon.
+    var keepTitle = document.title;
+    var headInjection =
+      '<link rel="icon" type="image/png" href="icon.png">' +
+      '<script>(function(){var t=' + JSON.stringify(keepTitle) + ';' +
+      'try{document.title=t;Object.defineProperty(document,"title",{configurable:true,get:function(){return t;},set:function(){}});}' +
+      'catch(e){document.title=t;}})();<\/script>';
+    var headEnd = html.indexOf("</head>");
+    if (headEnd !== -1) {
+      html = html.slice(0, headEnd) + headInjection + html.slice(headEnd);
+    }
+
+    // Replace this loader page with the assembled game document. This keeps the
+    // real page URL/origin, so the emulator's IndexedDB and screen sizing behave
+    // exactly as they would if the single HTML file had been opened directly.
+    document.open();
+    document.write(html);
+    document.close();
+  }
+
+  function fetchParts() {
+    var done = 0;
+    return Promise.all(partNames.map(function (name) {
+      return fetch(name, { cache: "no-store" }).then(function (response) {
+        if (!response.ok) throw new Error(name + " returned HTTP " + response.status);
+        return response.arrayBuffer().then(function (buffer) {
+          done++;
+          fill.style.width = ((done / PART_COUNT) * 100).toFixed(0) + "%";
+          msg.textContent = "Loaded part " + done + " of " + PART_COUNT + ".";
+          return buffer;
+        });
+      });
+    }));
+  }
+
+  fetchParts().then(launch).catch(function (error) {
+    showFallback("Could not load the split game files: " + error.message);
+  });
+
+  picker.addEventListener("change", function () {
+    var files = Array.prototype.slice.call(picker.files).filter(function (file) {
+      return /^part-\d{2}\.bin$/.test(file.name);
+    }).sort(function (a, b) {
+      return a.name.localeCompare(b.name);
+    });
+
+    if (files.length !== PART_COUNT) {
+      msg.textContent = "Select the parts folder that contains all " + PART_COUNT + " part-XX.bin files.";
+      return;
+    }
+
+    msg.textContent = "Reading " + PART_COUNT + " parts…";
+    Promise.all(files.map(function (file) { return file.arrayBuffer(); }))
+      .then(launch)
+      .catch(function (error) {
+        msg.textContent = "Could not read the parts: " + error.message;
+      });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+parts/*.bin -text
+icon.png binary
+index.html text eol=lf
